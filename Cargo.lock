@@ -727,6 +727,7 @@ dependencies = [
  "glib",
  "gtk4",
  "image",
+ "rayon",
 ]
 
 [[package]]

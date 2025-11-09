@@ -74,3 +74,79 @@ pub fn convert_image(
 
     Ok(())
 }
+
+pub fn convert_batch_parallel(
+    files: Vec<PathBuf>,
+    format: ConvertFormat,
+    overwrite: bool,
+    progress_callback: impl Fn(usize, usize) + Send + Sync + 'static,
+) -> (usize, usize, Vec<String>) {
+    use rayon::prelude::*;
+    use std::sync::{Arc, Mutex};
+
+    let total_files = files.len();
+    let success_count = Arc::new(Mutex::new(0));
+    let error_count = Arc::new(Mutex::new(0));
+    let errors = Arc::new(Mutex::new(Vec::new()));
+    let processed_count = Arc::new(Mutex::new(0));
+
+    // Process files in parallel using rayon
+    files.par_iter().for_each(|file_path| {
+        let input_stem = file_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("converted");
+
+        let output_filename = if overwrite {
+            format!("{}.{}", input_stem, format.extension())
+        } else {
+            let mut counter = 1;
+            let base_path = file_path.parent().unwrap_or(std::path::Path::new("."));
+            loop {
+                let filename = format!(
+                    "{}_converted_{}.{}",
+                    input_stem,
+                    counter,
+                    format.extension()
+                );
+                let test_path = base_path.join(&filename);
+                if !test_path.exists() {
+                    break filename;
+                }
+                counter += 1;
+            }
+        };
+
+        let output_path = file_path
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join(output_filename);
+
+        match convert_image(file_path.clone(), output_path.clone(), format.clone()) {
+            Ok(_) => {
+                *success_count.lock().unwrap() += 1;
+                println!("Successfully converted: {}", file_path.display());
+            }
+            Err(e) => {
+                *error_count.lock().unwrap() += 1;
+                let error_msg = format!(
+                    "{}: {}",
+                    file_path.file_name().unwrap_or_default().to_string_lossy(),
+                    e
+                );
+                errors.lock().unwrap().push(error_msg);
+            }
+        }
+
+        // Update progress
+        let mut processed = processed_count.lock().unwrap();
+        *processed += 1;
+        progress_callback(*processed, total_files);
+    });
+
+    let final_success = *success_count.lock().unwrap();
+    let final_errors = *error_count.lock().unwrap();
+    let error_list = errors.lock().unwrap().clone();
+
+    (final_success, final_errors, error_list)
+}

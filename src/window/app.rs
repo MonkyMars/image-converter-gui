@@ -1,13 +1,14 @@
 use gtk4::prelude::*;
 use gtk4::{
     Align, Application, ApplicationWindow, Box, Button, CheckButton, DropDown, Frame, Label,
-    ListBox, ListBoxRow, Orientation, PolicyType, ScrolledWindow, Separator, StringList,
+    ListBox, ListBoxRow, Orientation, PolicyType, ProgressBar, ScrolledWindow, Separator,
+    StringList,
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use crate::convert::{convert_image, ConvertFormat};
+use crate::convert::{convert_batch_parallel, convert_image, ConvertFormat};
 use crate::window::dialog;
 
 pub fn get_app() -> Application {
@@ -402,13 +403,21 @@ fn build_ui(app: &Application) {
         });
     }
 
-    // Connect process button
+    // Get progress bar reference
+    let progress_bar = get_widget_by_name(&batch_section, "progress_bar")
+        .unwrap()
+        .downcast::<ProgressBar>()
+        .unwrap();
+
+    // Connect process button with parallel processing
     {
         let window_clone = window.clone();
         let batch_files_clone = batch_files.clone();
+        let progress_bar_clone = progress_bar.clone();
+        let process_btn_clone = process_btn.clone();
 
         process_btn.connect_clicked(move |_| {
-            let files = batch_files_clone.borrow();
+            let files = batch_files_clone.borrow().clone();
             if !files.is_empty() {
                 let selected_index = batch_format_dropdown.selected();
                 let format = match selected_index {
@@ -421,57 +430,22 @@ fn build_ui(app: &Application) {
                 };
 
                 let overwrite = batch_overwrite_check.is_active();
-                let mut success_count = 0;
-                let mut error_count = 0;
-                let mut errors = Vec::new();
 
-                for file_path in files.iter() {
-                    let input_stem = file_path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("converted");
+                // Show progress and disable button
+                process_btn_clone.set_sensitive(false);
+                process_btn_clone.set_label("Converting...");
+                progress_bar_clone.set_visible(true);
+                progress_bar_clone.pulse();
 
-                    let output_filename = if overwrite {
-                        format!("{}.{}", input_stem, format.extension())
-                    } else {
-                        let mut counter = 1;
-                        let base_path = file_path.parent().unwrap_or(std::path::Path::new("."));
-                        loop {
-                            let filename = format!(
-                                "{}_converted_{}.{}",
-                                input_stem,
-                                counter,
-                                format.extension()
-                            );
-                            let test_path = base_path.join(&filename);
-                            if !test_path.exists() {
-                                break filename;
-                            }
-                            counter += 1;
-                        }
-                    };
-
-                    let output_path = file_path
-                        .parent()
-                        .unwrap_or(std::path::Path::new("."))
-                        .join(output_filename);
-
-                    match convert_image(file_path.clone(), output_path.clone(), format.clone()) {
-                        Ok(_) => {
-                            success_count += 1;
-                            println!("Successfully converted: {}", file_path.display());
-                        }
-                        Err(e) => {
-                            error_count += 1;
-                            let error_msg = format!(
-                                "{}: {}",
-                                file_path.file_name().unwrap_or_default().to_string_lossy(),
-                                e
-                            );
-                            errors.push(error_msg);
-                        }
-                    }
-                }
+                // Run conversion with parallel processing
+                let (success_count, error_count, errors) = convert_batch_parallel(
+                    files,
+                    format.clone(),
+                    overwrite,
+                    |_processed, _total| {
+                        // Progress callback - could add more sophisticated progress here
+                    },
+                );
 
                 let format_name = match format {
                     ConvertFormat::Jpeg => "JPEG",
@@ -499,6 +473,11 @@ fn build_ui(app: &Application) {
                 } else {
                     dialog::show_error_dialog(&window_clone, &message);
                 }
+
+                // Reset UI
+                process_btn_clone.set_sensitive(true);
+                process_btn_clone.set_label("Convert All Files");
+                progress_bar_clone.set_visible(false);
             }
         });
     }
@@ -663,6 +642,15 @@ fn create_batch_upload_section() -> Box {
     format_box.append(&process_button);
 
     options_box.append(&format_box);
+
+    // Add progress bar
+    let progress_bar = ProgressBar::new();
+    progress_bar.set_widget_name("progress_bar");
+    progress_bar.set_visible(false);
+    progress_bar.set_margin_top(12);
+    progress_bar.set_show_text(true);
+    options_box.append(&progress_bar);
+
     section_box.append(&options_box);
 
     frame.set_child(Some(&section_box));
