@@ -1,4 +1,4 @@
 mod app;
 mod dialog;
 
-pub use app::get_app;
+pub use app::create_app;

@@ -1,22 +1,28 @@
 pub mod convert;
 mod window;
 
-use gtk4::glib::ExitCode;
-use gtk4::prelude::*;
-use window::get_app;
+use fltk::{app, prelude::*};
+use window::create_app;
 
-fn main() -> ExitCode {
-    // Initialize GTK
-    match gtk4::init() {
-        Ok(_) => println!("GTK4 initialized successfully"),
-        Err(e) => {
-            eprintln!("Failed to initialize GTK4: {}", e);
-            return ExitCode::FAILURE;
-        }
-    }
+fn main() {
+    println!("Initializing FLTK application...");
 
-    // Run the app
-    println!("Creating application...");
-    let app = get_app();
-    app.run()
+    // Initialize FLTK
+    let app = app::App::default().with_scheme(app::Scheme::Gtk);
+
+    // Set a dark theme
+    app::set_background_color(26, 26, 26);
+    app::set_background2_color(45, 45, 45);
+    app::set_foreground_color(255, 255, 255);
+
+    println!("Creating application window...");
+
+    // Create and show the main window
+    let mut wind = create_app();
+    wind.show();
+
+    println!("Running application...");
+
+    // Run the application
+    app.run().unwrap();
 }
